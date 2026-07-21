@@ -1,0 +1,16 @@
+logs/
+secrets/
+config/generated/
+config/local.json
+config/local.*.json
+config/local-presets/
+*.log
+*.err.log
+*.result.json
+
+.env
+.env.*
+node_modules/
+
+.DS_Store
+Thumbs.db

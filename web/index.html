@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>羽毛球抢场控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>羽毛球抢场控制台</h1>
+        <p id="repoLine" class="muted"></p>
+      </div>
+      <div class="actions">
+        <button id="refreshBtn" type="button">刷新</button>
+        <button id="selfCheckBtn" type="button">自检</button>
+        <button id="planBtn" type="button">预览下一次</button>
+        <button id="installBtn" type="button" class="primary">安装下一次</button>
+      </div>
+    </header>
+
+    <section class="status-band" id="statusBand">
+      <div>
+        <span class="label">最近结果</span>
+        <strong id="lastResult">读取中</strong>
+      </div>
+      <div>
+        <span class="label">目标</span>
+        <strong id="targetSummary">读取中</strong>
+      </div>
+      <div>
+        <span class="label">任务链路</span>
+        <strong id="taskSummary">读取中</strong>
+      </div>
+      <div>
+        <span class="label">自检</span>
+        <strong id="selfCheckSummary">未运行</strong>
+        <small id="selfCheckMail" class="muted"></small>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>任务变量</h2>
+        <span class="pill ok">默认成功参数</span>
+      </div>
+      <form id="variableForm" class="form-grid">
+        <label>
+          <span>运行日期</span>
+          <input id="runDate" name="runDate" type="date">
+        </label>
+        <label>
+          <span>预约日期</span>
+          <input id="targetDate" name="targetDate" type="date">
+        </label>
+        <label>
+          <span>优先校区</span>
+          <select id="primaryCampus" name="primaryCampus">
+            <option value="lxd">留仙洞</option>
+            <option value="xlh">西丽湖</option>
+          </select>
+        </label>
+        <label>
+          <span>候补校区</span>
+          <select id="fallbackCampus" name="fallbackCampus">
+            <option value="xlh">西丽湖</option>
+            <option value="lxd">留仙洞</option>
+            <option value="none">不候补</option>
+          </select>
+        </label>
+        <label>
+          <span>开始时间</span>
+          <select id="desiredStartTime" name="desiredStartTime"></select>
+        </label>
+        <label>
+          <span>结束时间</span>
+          <select id="desiredEndTime" name="desiredEndTime"></select>
+        </label>
+        <label>
+          <span>最长时长</span>
+          <select id="maxBookingMinutes" name="maxBookingMinutes">
+            <option value="60">60 分钟</option>
+            <option value="90">90 分钟</option>
+            <option value="120">120 分钟</option>
+          </select>
+        </label>
+        <label>
+          <span>金额上限</span>
+          <input id="maxBookingAmount" name="maxBookingAmount" type="number" min="1" max="1000" step="0.5">
+        </label>
+        <label>
+          <span>候补最短</span>
+          <select id="partialMinMinutes" name="partialMinMinutes">
+            <option value="60">60 分钟</option>
+            <option value="90">90 分钟</option>
+            <option value="120">120 分钟</option>
+          </select>
+        </label>
+        <label class="checkbox-line">
+          <input id="autoPay" name="autoPay" type="checkbox" checked>
+          <span>自动付款</span>
+        </label>
+      </form>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h2 id="configTitle">当前安装配置</h2>
+          <span id="profilePill" class="pill">待检查</span>
+        </div>
+        <dl class="config-list" id="configList"></dl>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>最近订单</h2>
+          <span id="resultPill" class="pill">读取中</span>
+        </div>
+        <dl class="config-list" id="resultList"></dl>
+      </section>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Windows 任务</h2>
+        <span id="tasksPill" class="pill">读取中</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>任务</th>
+              <th>状态</th>
+              <th>下次运行</th>
+              <th>上次结果</th>
+              <th>入口</th>
+            </tr>
+          </thead>
+          <tbody id="taskRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel output-panel">
+      <div class="panel-head">
+        <h2>输出</h2>
+        <span id="busyPill" class="pill">空闲</span>
+      </div>
+      <pre id="output"></pre>
+    </section>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
