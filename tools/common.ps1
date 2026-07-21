@@ -23,23 +23,38 @@ function Resolve-ProjectPath {
 
 function Read-BookingConfig {
     param(
-        [Parameter(Mandatory)][string]$ConfigPath,
-        [string]$ConfigJsonBase64 = ""
+        [string]$ConfigPath = "config/local.json",
+        [string]$ConfigJsonBase64 = "",
+        [hashtable]$Overrides = $null
     )
     $root = Get-ProjectRoot
     $resolved = Resolve-ProjectPath -Root $root -Path $ConfigPath
-    if ($ConfigJsonBase64) {
-        $jsonText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($ConfigJsonBase64))
-        $config = $jsonText | ConvertFrom-Json
-    } else {
-        if (-not (Test-Path -LiteralPath $resolved)) {
-            throw "Config not found: $resolved"
-        }
-        $jsonText = [System.IO.File]::ReadAllText($resolved, [System.Text.Encoding]::UTF8).TrimStart([char]0xfeff)
-        $config = $jsonText | ConvertFrom-Json
+    $resolver = Join-Path $root "scripts\config_resolver.mjs"
+    if (-not (Test-Path -LiteralPath $resolver)) {
+        throw "Configuration resolver not found: $resolver"
     }
+    $node = Get-Command node -ErrorAction Stop
+    $resolverArgs = @($resolver, "--config", $resolved)
+    if ($ConfigJsonBase64) {
+        $resolverArgs += @("--config-base64", $ConfigJsonBase64)
+    }
+    if ($Overrides -and $Overrides.Count -gt 0) {
+        $overridesJson = $Overrides | ConvertTo-Json -Depth 20 -Compress
+        $overridesBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($overridesJson))
+        $resolverArgs += @("--overrides-base64", $overridesBase64)
+    }
+    $output = & $node.Source @resolverArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Configuration resolution failed: $($output -join [Environment]::NewLine)"
+    }
+    $jsonText = ($output -join [Environment]::NewLine).Trim().TrimStart([char]0xfeff)
+    $config = $jsonText | ConvertFrom-Json
     $config | Add-Member -NotePropertyName "_configPath" -NotePropertyValue $resolved -Force
     return $config
+}
+
+function Get-ProjectTaskPrefix {
+    return "BadmintonBookingAssistant_"
 }
 
 function Get-DateOnly {

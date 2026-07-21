@@ -4,6 +4,7 @@ config/generated/
 config/local.json
 config/local.*.json
 config/local-presets/
+config/*.tmp.json
 *.log
 *.err.log
 *.result.json

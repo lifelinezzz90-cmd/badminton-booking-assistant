@@ -16,6 +16,7 @@ import {
   validateConfig,
   venueStatePageFunction,
 } from "./booking_logic.mjs";
+import { resolveConfig } from "./config_resolver.mjs";
 
 const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -25,8 +26,6 @@ const CODEX_HOME = process.env.CODEX_HOME || path.join(process.env.USERPROFILE |
 const CODEX_PLUGIN_CACHE_ROOT =
   process.env.CODEX_PLUGIN_CACHE_ROOT || path.join(CODEX_HOME, "plugins", "cache");
 const EASYCONNECT_APP_PATTERN = /EasyConnect|Sangfor|SSLVPN|\u542f\u52a8EasyConnect/i;
-const DEFAULT_EASYCONNECT_SHORTCUT =
-  "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\SSLVPN\u767b\u5f55\u5ba2\u6237\u7aef\\\u542f\u52a8EasyConnect.lnk";
 
 function resolveProjectPath(value) {
   return path.isAbsolute(value) ? value : path.resolve(PROJECT_ROOT, value);
@@ -55,16 +54,14 @@ function isBeforeToday(dateText) {
 
 function applyRuntimeDefaults(config) {
   config.easyConnectAppPattern ||= EASYCONNECT_APP_PATTERN.source;
-  config.easyConnectShortcutPath ||= DEFAULT_EASYCONNECT_SHORTCUT;
-  config.vpnLaunchMode ||= "manual_only";
-  config.vpnPostLaunchWaitSeconds ||= 10;
+  config.vpnLaunchMode ||= "explorer_shortcut";
+  config.vpnPostLaunchWaitSeconds ||= 120;
   return config;
 }
 
 export async function loadConfig(configPath = "config/local.json") {
   const fullPath = resolveProjectPath(configPath);
-  const config = applyRuntimeDefaults(parseJsonText(await fs.readFile(fullPath, "utf8")));
-  config._configPath = fullPath;
+  const config = applyRuntimeDefaults(await resolveConfig({ configPath: fullPath }));
   validateConfig(config);
   return { config, configPath: fullPath };
 }
@@ -351,7 +348,7 @@ foreach ($rootPath in $roots) {
 }
 
 async function openEasyConnectViaExplorerShortcut({ config, logger }) {
-  const resolved = await resolveEasyConnectShortcut(config.easyConnectShortcutPath || DEFAULT_EASYCONNECT_SHORTCUT);
+  const resolved = await resolveEasyConnectShortcut(config.easyConnectShortcutPath || "");
   if (!resolved.ok || !resolved.path) {
     throw new Error("EasyConnect shortcut not found; refusing direct executable/app-id EasyConnect launch to avoid VPN anomaly.");
   }
@@ -707,7 +704,7 @@ async function sendResultMail({ config, resultPath, logPath, mailLogPath }) {
     "-CredentialSecureStringPath",
     smtpSecret,
     "-TaskName",
-    String(config.taskName || "CodexBadminton"),
+    String(config.taskName || "BadmintonBookingAssistant"),
   ];
   try {
     const { stdout, stderr } = await execFileAsync("powershell.exe", args, {
