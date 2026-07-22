@@ -1,255 +1,91 @@
-# codex-badminton
+<p align="center"><img src="assets/logo.svg" width="96" alt="Badminton Booking Assistant"></p>
+<h1 align="center">Badminton Booking Assistant</h1>
+<p align="center">面向 Windows 的定时羽毛球场预约助手：先预检、再计划、按时执行，并保留完整候补链路。</p>
+<p align="center"><a href="https://github.com/lifelinezzz90-cmd/badminton-booking-assistant/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lifelinezzz90-cmd/badminton-booking-assistant/ci.yml?branch=main&label=CI"></a> <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-126b4d"></a> <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4"> <a href="https://github.com/lifelinezzz90-cmd/badminton-booking-assistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lifelinezzz90-cmd/badminton-booking-assistant?include_prereleases"></a></p>
+<p align="center"><a href="README.en.md">English</a> · <a href="docs/installation.md">安装</a> · <a href="docs/configuration.md">配置</a> · <a href="docs/troubleshooting.md">排障</a> · <a href="SECURITY.md">安全</a></p>
 
-Windows automation for booking badminton courts through a campus venue system. The unattended production path uses Kimi WebBridge, an existing VPN connection or EasyConnect shortcut, campus CAS login, configured campus/court priorities, optional automatic payment, result logs, and email notification.
+![脱敏状态面板](assets/dashboard-preview.svg)
 
-> This repository contains source code and a non-sensitive example configuration only. Accounts, email addresses, credentials, cookies, generated booking configs, and logs must remain local.
+## 快速开始
 
-## Privacy model
-
-Safe to commit:
-
-- `config/config.example.json`: complete configuration template with placeholder values.
-- `scripts/`, `tools/`, and `web/`: project source code.
-- `README.md`: setup and variable documentation.
-
-Ignored and never intended for GitHub:
-
-- `config/local.json`: real account, email, machine paths, and booking preferences.
-- `config/local.*.json` and `config/local-presets/`: alternate local configurations.
-- `config/generated/`: effective configs generated for scheduled runs.
-- `secrets/`: DPAPI-encrypted CAS passwords, SMTP authorization codes, and session snapshots.
-- `logs/`, `*.log`, and `*.result.json`: runtime evidence, booking results, and mail logs.
-- `.env*` and `node_modules/`: local environment files and dependencies.
-
-Do not commit DPAPI files even though they are encrypted. They are intended to be decrypted only by the same Windows logon identity that created them.
-
-## Quick start
-
-### 1. Create the private local config
+先克隆仓库并进入目录：
 
 ```powershell
-Copy-Item .\config\config.example.json .\config\local.json
-notepad .\config\local.json
+git clone https://github.com/lifelinezzz90-cmd/badminton-booking-assistant.git
+cd badminton-booking-assistant
 ```
 
-`config/local.json` is ignored by Git. Never put real values back into `config/config.example.json`.
-
-### 2. Fill the required variables
-
-At minimum, review and fill these values:
-
-| Variable | Required when | Value |
-| --- | --- | --- |
-| `username` | Always | Campus CAS account. |
-| `passwordSecret` | Always | Local DPAPI file containing the CAS password, for example `secrets/cas_password.dpapi.txt`. |
-| `sessionSnapshotSecret` | Recommended | Local DPAPI file used for the encrypted CAS session snapshot. |
-| `smtpSecret` | `mailOnCompletion=true` | Local DPAPI file containing the SMTP authorization code. |
-| `mailTo` | `mailOnCompletion=true` | Result email recipient. |
-| `mailFrom` | `mailOnCompletion=true` | SMTP sender address. |
-| `smtpServer` | `mailOnCompletion=true` | SMTP host supplied by the mail provider. |
-| `smtpPort` | `mailOnCompletion=true` | SMTP port supplied by the mail provider. |
-| `vpnProbeUrl` | `openVpn=true` | Business URL that is reachable only when the VPN is ready. |
-| `easyConnectShortcutPath` | `openVpn=true` | Absolute path of the local EasyConnect Start Menu shortcut. |
-| `primaryCampus` | Always | First campus to try, such as `lxd`. |
-| `fallbackCampus` | When fallback is wanted | Fallback campus, or `none` to disable campus fallback. |
-| `lxdCourtPriority` | When LXD is used | LXD court priority, comma-separated. |
-| `xlhCourtPriority` | When XLH is used | XLH court priority, comma-separated. |
-| `desiredStartTime` | Always | Requested start time in `HH:mm` format. |
-| `desiredEndTime` | Always | Requested end time in `HH:mm` format. |
-
-### 3. Create encrypted local credentials
-
-CAS password:
+然后只需三条命令：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\set-secret.ps1 `
-  -Path .\secrets\cas_password.dpapi.txt `
-  -Prompt "Enter CAS password" `
-  -Verify
+.\badminton.ps1 setup
+.\badminton.ps1 doctor
+.\badminton.ps1 schedule -TargetDate 2026-07-29 -Start 19:30 -End 21:00 -PlanOnly
 ```
 
-SMTP authorization code:
+确认预览无误后，去掉 `-PlanOnly` 再运行一次即可安装五段式计划任务。首次使用前请阅读[安装指南](docs/installation.md)。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\set-secret.ps1 `
-  -Path .\secrets\smtp_authorization.dpapi.txt `
-  -Prompt "Enter SMTP authorization code" `
-  -Verify
+## 核心能力
+
+- 单一入口：`setup`、`doctor`、`schedule`、`status`、`config`、`dashboard`、`uninstall`。
+- 稳健候补：主校区失败后尝试候补校区；按场地优先级继续尝试，不会因一个场地失败就停止。
+- 部分时段兜底：完整时段不可用时，可按最小时长继续匹配。
+- 五段式任务链：WebBridge 预启动、VPN 预连接、预检、正式预约、结果复查。
+- 安全默认：邮件和自动付款均默认关闭；密码、SMTP 授权码使用当前 Windows 用户的 DPAPI 加密。
+- 向后兼容：旧版 46 字段扁平配置可直接读取，无需迁移。
+
+## 工作原理
+
+`badminton.ps1` 将内部默认值、`config/local.json` 与单次命令参数合并成唯一的生效配置。PowerShell 安装器、Node 预约执行器和可选状态面板使用同一解析结果。`schedule -PlanOnly` 只生成计划，不创建任务、日志或生成配置。
+
+默认配置只需四项：
+
+```json
+{
+  "version": 1,
+  "username": "YOUR_CAS_ACCOUNT",
+  "primaryCampus": "lxd",
+  "fallbackCampus": "xlh"
+}
 ```
 
-Never store plaintext passwords or authorization codes in JSON, scripts, README files, shell history, or Git commits.
+场地顺序、VPN 快捷方式、邮件和高级轮询项仅在需要覆盖默认行为时写入。详见[配置与高级选项](docs/configuration.md)。
 
-### 4. Run local checks
+## 兼容性
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\test-project.ps1 `
-  -ConfigPath .\config\local.json
-```
+首版支持 Windows、PowerShell 5.1+、Node.js 20+、Chrome、Kimi WebBridge 与 EasyConnect，当前适配深圳职业技术大学体育场馆预约系统的留仙洞和西丽湖场馆。其他场馆系统需要适配页面路由和预约逻辑。
 
-Validate the proven production profile:
+本项目是非官方社区工具，与任何学校、场馆、VPN 或浏览器扩展提供方均无隶属或授权关系。请遵守目标系统规则并自行承担使用风险。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\assert-success-profile.ps1 `
-  -ConfigPath .\config\local.json
-```
+## 安全说明
 
-### 5. Preflight and install scheduled tasks
+- 不要提交 `config/local.json`、`secrets/`、`logs/`、`config/generated/` 或浏览器会话。
+- 明文密码、SMTP 授权码、Cookie 和 Token 会被配置解析器拒绝。
+- VPN 默认扫描系统级和用户级开始菜单快捷方式；只有自动发现失败时才保存自定义 `.lnk` 路径。
+- 自动付款只能通过 `.\badminton.ps1 config -EnableAutoPayment` 并输入确认短语开启。
+- `uninstall` 仅删除本项目创建的 `BadmintonBookingAssistant_*` 任务。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\precheck.ps1 `
-  -ConfigPath .\config\local.json `
-  -RunDate 2026-07-22 `
-  -TargetDate 2026-07-23
-```
+完整威胁模型与报告方式见[安全模型](docs/security.md)和[SECURITY.md](SECURITY.md)。
 
-Preview the next formal install:
+## 常见问题
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\install-next-formal-run.ps1 `
-  -ConfigPath .\config\local.json `
-  -PlanOnly
-```
+**为什么 doctor 提示 WebBridge 或 VPN 不可用？** 先确认 Chrome、Kimi WebBridge 和 EasyConnect 已安装，再查看[故障排查](docs/troubleshooting.md)。
 
-Install after reviewing the plan:
+**没有抢到首选场地会停止吗？** 不会。默认继续尝试后续场地、候补校区和满足下限的部分时段。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\install-next-formal-run.ps1 `
-  -ConfigPath .\config\local.json
-```
+**可以不安装任务先验证吗？** 可以。始终先运行 `schedule ... -PlanOnly`。
 
-The installer creates the WebBridge prestart, VPN preconnect, preflight, booking, and postcheck tasks. The effective config is embedded into installed task arguments, so later changes to the example config do not alter an already-installed run.
+**网页面板能修改自动付款吗？** 不能。面板只展示状态；高风险选项必须从 CLI 显式开启。
 
-## Complete configuration reference
+## 文档
 
-### Identity, secrets, and email
+- [安装指南](docs/installation.md)
+- [配置与高级选项](docs/configuration.md)
+- [故障排查](docs/troubleshooting.md)
+- [架构说明](docs/architecture.md)
+- [安全模型](docs/security.md)
+- [贡献指南](CONTRIBUTING.md) · [更新日志](CHANGELOG.md)
 
-| Variable | Type | Description |
-| --- | --- | --- |
-| `username` | string | CAS account. Keep the real value only in `config/local.json`. |
-| `passwordSecret` | path | DPAPI file containing the CAS password. |
-| `sessionSnapshotSecret` | path | DPAPI file containing a reusable encrypted session snapshot. |
-| `smtpSecret` | path | DPAPI file containing the SMTP authorization code. |
-| `mailTo` | string | Result email recipient. |
-| `mailFrom` | string | SMTP sender. |
-| `smtpServer` | string | SMTP hostname. |
-| `smtpPort` | integer | SMTP port. |
-| `mailOnCompletion` | boolean | Send a result email after each run. |
+## License
 
-### Campus, courts, time, and payment
-
-| Variable | Type | Description |
-| --- | --- | --- |
-| `taskName` | string | Windows Task Scheduler name prefix. |
-| `primaryCampus` | string | First campus: `lxd` or `xlh`. |
-| `fallbackCampus` | string | `lxd`, `xlh`, `auto`, or `none`. |
-| `lxdCourtPriority` | CSV string | LXD court order. |
-| `xlhCourtPriority` | CSV string | XLH court order. |
-| `desiredStartTime` | `HH:mm` | Requested start time. |
-| `desiredEndTime` | `HH:mm` | Requested end time. |
-| `maxBookingMinutes` | integer | Maximum duration to book. |
-| `maxBookingAmount` | number | Maximum allowed payment amount. |
-| `partialMinMinutes` | integer | Minimum continuous duration for partial fallback. |
-| `disablePartialFallback` | boolean | Disable partial-duration fallback when `true`. |
-| `maxPaymentAttempts` | integer | Maximum automatic payment attempts. |
-
-### Scheduling, polling, and selection strategy
-
-| Variable | Type | Description |
-| --- | --- | --- |
-| `readyDeadline` | `HH:mm:ss` | Deadline for the support chain to be ready. |
-| `taskStartTime` | `HH:mm:ss` | Booking task start time. |
-| `pollStartTime` | `HH:mm:ss` | Time to begin availability polling. |
-| `pollUntilTime` | `HH:mm:ss` | Time to stop polling. |
-| `pollIntervalMs` | integer | Poll interval in milliseconds. |
-| `fallbackAfterMisses` | integer | Misses before campus fallback is allowed. |
-| `partialFallbackStartTime` | `HH:mm:ss` | Earliest time for partial-duration fallback. |
-| `partialFallbackAfterMisses` | integer | Misses before partial-duration fallback is allowed. |
-| `fastRefreshDelayMs` | integer | Delay after a fast page refresh. |
-| `fastRefreshTimeoutMs` | integer | Fast refresh timeout. |
-| `fastSelectDelayMs` | integer | Short delay before selecting a court. |
-| `primaryCampusHoldSeconds` | integer | Time reserved for the primary campus before fallback. |
-| `minPollingStay` | integer | Minimum polling iterations before switching branches. |
-| `staleStateTrigger` | integer | Unchanged states before recovery logic is triggered. |
-| `missLogEvery` | integer | Log every N misses to reduce log volume. |
-| `pageWaitSeconds` | integer | Maximum page/login wait time. |
-| `wakeToRun` | boolean | Allow Task Scheduler to wake the computer. |
-
-### VPN and browser
-
-| Variable | Type | Description |
-| --- | --- | --- |
-| `openVpn` | boolean | Start/check VPN as part of the scheduled chain. |
-| `vpnLaunchMode` | string | The supported production mode is `explorer_shortcut`. |
-| `vpnPostLaunchWaitSeconds` | integer | Wait after starting VPN. |
-| `vpnProbeUrl` | URL | Business URL used to prove VPN connectivity. |
-| `vpnReadyTimeoutSeconds` | integer | VPN readiness timeout. |
-| `easyConnectAppPattern` | regex string | EasyConnect process/window match expression. |
-| `easyConnectShortcutPath` | path | EasyConnect Start Menu shortcut. |
-| `browserMode` | string | The unattended production path uses `webbridge`. |
-
-## Environment variables
-
-These variables are optional and are only needed when default installation paths or ports do not apply:
-
-| Environment variable | Default | Purpose |
-| --- | --- | --- |
-| `KIMI_WEBBRIDGE_EXE` | `%USERPROFILE%\.kimi-webbridge\bin\kimi-webbridge.exe` | Override the Kimi WebBridge executable. |
-| `CODEX_HOME` | `%USERPROFILE%\.codex` | Override the Codex home directory. |
-| `CODEX_PLUGIN_CACHE_ROOT` | `%CODEX_HOME%\plugins\cache` | Override the Codex plugin cache directly. |
-| `PORT` | `8787` | Local dashboard port. |
-
-`CODEX_YDSZ_SNAPSHOT_B64` is an internal temporary process variable. Do not set or persist it manually.
-
-## Common commands
-
-Start the local dashboard:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start-ui.ps1
-```
-
-The default address is `http://127.0.0.1:8787/`.
-
-Manual dry run:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run-booking.ps1 `
-  -ConfigPath .\config\local.json `
-  -RunDate 2026-07-22 `
-  -TargetDate 2026-07-23 `
-  -DryRun
-```
-
-Manual production run:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\run-booking.ps1 `
-  -ConfigPath .\config\local.json `
-  -RunDate 2026-07-22 `
-  -TargetDate 2026-07-23
-```
-
-## Project layout
-
-- `scripts/booking_logic.mjs`: booking decisions and page-injected functions.
-- `scripts/webbridge_runner.mjs`: unattended Kimi WebBridge orchestration.
-- `scripts/codex_plugin_runner.mjs`: Codex Chrome/Computer Use rescue path.
-- `scripts/ui_server.mjs`: local dashboard API and static server.
-- `tools/install-next-formal-run.ps1`: calculate and install the next complete task chain.
-- `tools/install-task.ps1`: install one dated Task Scheduler run.
-- `tools/precheck.ps1`: VPN, WebBridge, credential, CAS, and venue checks.
-- `tools/postcheck.ps1`: require a fresh result and notify on missing results.
-- `tools/test-project.ps1`: source and local runtime checks.
-- `tools/set-secret.ps1`: create a DPAPI secret for the current Windows identity.
-- `web/`: dashboard frontend.
-
-## Security guardrails
-
-- Never commit plaintext passwords, authorization codes, cookies, tokens, real accounts, private email addresses, or phone numbers.
-- Never commit `config/local.json`, `secrets/`, `logs/`, or `config/generated/`.
-- The production polling and selection path uses page logic, not screenshot coordinates.
-- VPN startup uses a verified Start Menu shortcut and does not directly launch an unknown executable.
-- Do not open CAS until the VPN business probe succeeds.
-- Scheduled tasks must run under the same Windows identity that created the DPAPI files.
-- Locking or sleeping with wake enabled can work; logging out prevents tasks that use an interactive logon token from running.
-- Before pushing, run tests, scan for secrets, and inspect `git diff --cached` for local configs and runtime evidence.
+[MIT](LICENSE)

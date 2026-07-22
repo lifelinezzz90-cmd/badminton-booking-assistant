@@ -10,7 +10,7 @@ function Write-Step {
     "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss.fff"), $Message
 }
 
-$webBridge = if ($env:KIMI_WEBBRIDGE_EXE) { $env:KIMI_WEBBRIDGE_EXE } else { Join-Path $env:USERPROFILE ".kimi-webbridge\bin\kimi-webbridge.exe" }
+$webBridge = if ($ExecutablePath) { $ExecutablePath } elseif ($env:KIMI_WEBBRIDGE_EXE) { $env:KIMI_WEBBRIDGE_EXE } else { Join-Path $env:USERPROFILE ".kimi-webbridge\bin\kimi-webbridge.exe" }
 if (-not (Test-Path -LiteralPath $webBridge)) {
     throw "Kimi WebBridge executable not found: $webBridge"
 }

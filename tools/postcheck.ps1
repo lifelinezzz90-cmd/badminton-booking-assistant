@@ -50,7 +50,7 @@ if (-not $result) {
 }
 
 $lines = @(
-    "CodexBadminton postcheck",
+    "Badminton Booking Assistant postcheck",
     "RunKey: $RunKey",
     "Result: $($result.FullName)",
     "ResultWrite: $($result.LastWriteTime)",

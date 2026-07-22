@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { resolveConfig } from "./config_resolver.mjs";
 
 const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,7 @@ const CONTENT_TYPES = new Map([
   [".js", "text/javascript; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
+  [".svg", "image/svg+xml"],
 ]);
 
 function sendJson(res, status, value) {
@@ -136,29 +138,21 @@ function parseCheckLines(stdout) {
 function formatSelfCheckReport(report) {
   const failed = report.checks.filter((check) => !check.ok);
   const lines = [
-    `羽毛球抢场自检${report.ok ? "通过" : "失败"}`,
-    `时间：${report.completedAt}`,
-    `项目：${report.projectRoot}`,
-    `检查项：${report.passed}/${report.total} 通过，${report.failed} 失败`,
-    `报告文件：${report.resultPath}`,
+    "羽毛球预约助手自检" + (report.ok ? "通过" : "失败"),
+    "时间：" + report.completedAt,
+    "项目：" + report.projectRoot,
+    "检查项：" + report.passed + "/" + report.total + " 通过，" + report.failed + " 失败",
+    "报告文件：" + report.resultPath,
   ];
-  if (report.mail) {
-    lines.push(`邮件：${report.mail.sent ? `已发送到 ${report.mail.to || ""}` : `未发送 ${report.mail.error || report.mail.reason || ""}`}`.trim());
-  }
+  if (report.mail) lines.push("邮件：" + (report.mail.sent ? "已发送" : (report.mail.skipped ? "已关闭" : "发送失败")));
   if (failed.length) {
     lines.push("", "失败项：");
-    for (const check of failed) {
-      lines.push(`- ${check.name}${check.detail ? `：${check.detail}` : ""}`);
-    }
+    for (const check of failed) lines.push("- " + check.name + (check.detail ? "：" + check.detail : ""));
   }
   lines.push("", "完整明细：");
-  for (const check of report.checks) {
-    lines.push(`${check.status} ${check.name}${check.detail ? ` ${check.detail}` : ""}`.trim());
-  }
-  if (report.stderr) {
-    lines.push("", "错误输出：", repairMojibake(report.stderr));
-  }
-  return `${lines.join("\r\n")}\r\n`;
+  for (const check of report.checks) lines.push((check.status || "INFO") + " " + check.name + (check.detail ? " " + check.detail : ""));
+  if (report.stderr) lines.push("", "错误输出：", repairMojibake(report.stderr));
+  return lines.join("\r\n") + "\r\n";
 }
 
 function refreshSelfCheckCounts(report) {
@@ -199,8 +193,7 @@ async function runPowerShell(args, timeout = 120000) {
 }
 
 async function readFullConfig() {
-  const configPath = path.join(PROJECT_ROOT, "config", "formal_lxd_first.json");
-  return parseJsonText(await fs.readFile(configPath, "utf8"));
+  return resolveConfig({ configPath: path.join(PROJECT_ROOT, "config", "local.json") });
 }
 
 function summarizeConfig(config, source = "") {
@@ -219,6 +212,7 @@ function summarizeConfig(config, source = "") {
     browserMode: config.browserMode,
     openVpn: !!config.openVpn,
     mailOnCompletion: !!config.mailOnCompletion,
+    paymentAutoConfirm: !!config.paymentAutoConfirm,
     source,
   };
 }
@@ -313,10 +307,10 @@ async function runSelfCheck() {
     mailLogPath: report.mailLogPath,
   });
   report.checks.push({
-    status: report.mail.sent ? "OK" : "FAIL",
+    status: report.mail.sent ? "OK" : (report.mail.skipped ? "INFO" : "FAIL"),
     name: "mail:self-check",
-    ok: !!report.mail.sent,
-    detail: report.mail.sent ? `sent to ${report.mail.to || ""}` : (report.mail.error || report.mail.reason || "not sent"),
+    ok: !!report.mail.sent || !!report.mail.skipped,
+    detail: report.mail.sent ? "sent" : (report.mail.error || report.mail.reason || "not sent"),
     line: "",
   });
   refreshSelfCheckCounts(report);
@@ -353,7 +347,7 @@ async function readTaskStatus() {
   const command = [
     "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
     "[Console]::OutputEncoding = $OutputEncoding",
-    "$tasks = @(Get-ScheduledTask -TaskName 'CodexBadminton*' -ErrorAction SilentlyContinue | Sort-Object TaskName)",
+    "$tasks = @(Get-ScheduledTask -TaskName 'BadmintonBookingAssistant_*' -ErrorAction SilentlyContinue | Sort-Object TaskName)",
     "$rows = @($tasks | ForEach-Object {",
     "  $i = Get-ScheduledTaskInfo -TaskName $_.TaskName",
     "  $a = (($_.Actions | ForEach-Object { \"$($_.Execute) $($_.Arguments)\" }) -join ' ')",
@@ -390,7 +384,7 @@ async function readTaskStatus() {
           }
         }
       }
-      row.action = action.replace(/(-ConfigJsonBase64\s+)"[^"]+"/g, "$1\"[embedded-config]\"");
+      delete row.action;
     }
   }
   return { ok: true, rows, installedConfig };
@@ -418,13 +412,10 @@ async function readLatestResult() {
     const json = parseJsonText(await fs.readFile(latest.fullPath, "utf8"));
     const slot = json.slot || {};
     return {
-      file: latest.fullPath,
       name: latest.name,
       mtime: latest.mtime,
       success: !!json.success,
       failureReason: repairMojibake(json.failureReason || ""),
-      finalUrl: json.finalUrl || "",
-      run: json.run || {},
       slot: {
         campus: slot.campus || "",
         court: repairMojibake(slot.court || ""),
@@ -436,11 +427,23 @@ async function readLatestResult() {
         durationMinutes: slot.durationMinutes || "",
         fallbackMode: slot.fallbackMode || "",
       },
-      mail: json.mail || null,
     };
   } catch (error) {
-    return { file: latest.fullPath, name: latest.name, mtime: latest.mtime, success: false, failureReason: String(error?.message || error) };
+    return { name: latest.name, mtime: latest.mtime, success: false, failureReason: String(error?.message || error) };
   }
+}
+
+function summarizeSelfCheck(report) {
+  if (!report) return null;
+  return {
+    ok: !!report.ok,
+    startedAt: report.startedAt || "",
+    completedAt: report.completedAt || "",
+    total: Number(report.total || 0),
+    passed: Number(report.passed || 0),
+    failed: Number(report.failed || 0),
+    checks: Array.isArray(report.checks) ? report.checks.map(({ status, name, ok }) => ({ status, name, ok: !!ok })) : [],
+  };
 }
 
 async function dashboard() {
@@ -453,14 +456,12 @@ async function dashboard() {
   const installedConfig = tasks.installedConfig || null;
   return {
     generatedAt: new Date().toISOString(),
-    projectRoot: PROJECT_ROOT,
-    repoUrl: await readRemoteUrl(),
     config,
     installedConfig,
     effectiveConfig: installedConfig || config,
     tasks,
     latestResult,
-    latestSelfCheck,
+    latestSelfCheck: summarizeSelfCheck(latestSelfCheck),
   };
 }
 
@@ -500,7 +501,7 @@ async function handleApi(req, res) {
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/self-check") {
-    sendJson(res, 200, await runSelfCheck());
+    sendJson(res, 200, summarizeSelfCheck(await runSelfCheck()));
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/assert-profile") {

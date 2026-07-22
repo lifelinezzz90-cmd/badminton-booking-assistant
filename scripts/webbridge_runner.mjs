@@ -15,12 +15,11 @@ import {
   validateConfig,
   venueStatePageFunction,
 } from "./booking_logic.mjs";
+import { resolveConfig } from "./config_resolver.mjs";
 
 const execFileAsync = promisify(execFile);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MODULE_DIR, "..");
-const WEBBRIDGE = process.env.KIMI_WEBBRIDGE_EXE ||
-  path.join(process.env.USERPROFILE || "", ".kimi-webbridge", "bin", "kimi-webbridge.exe");
 const APP_INDEX_URL = "https://ydsz.szpu.edu.cn/easyserp/index.html#/index";
 const USERNAME_LOGIN_URL =
   "https://authserver.szpu.edu.cn/authserver/login?type=userNameLogin&service=https%3A%2F%2Fydsz.szpu.edu.cn%3A443%2Fcas%2F%2Flogin";
@@ -95,10 +94,8 @@ function stringifyResult(value) {
 }
 
 async function loadConfig(configPath) {
-  const fullPath = resolveProjectPath(configPath || "config/local.json");
-  const config = parseJsonText(await fs.readFile(fullPath, "utf8"));
+  const config = await resolveConfig({ configPath: configPath || "config/local.json" });
   validateConfig(config);
-  config._configPath = fullPath;
   return config;
 }
 
@@ -262,9 +259,11 @@ async function ensureVpn(config, logger) {
   });
 }
 
-async function ensureWebBridge(logger) {
+async function ensureWebBridge(logger, config) {
+  const webBridge = process.env.KIMI_WEBBRIDGE_EXE || config.webBridgeExecutablePath;
+  if (!webBridge) throw new Error("Kimi WebBridge executable path is not configured");
   async function status() {
-    const { stdout } = await execFileAsync(WEBBRIDGE, ["status"], { timeout: 15000, windowsHide: true });
+    const { stdout } = await execFileAsync(webBridge, ["status"], { timeout: 15000, windowsHide: true });
     return JSON.parse(stdout);
   }
   async function wakeExtension() {
@@ -277,6 +276,10 @@ async function ensureWebBridge(logger) {
       script,
       "-WaitSeconds",
       "30",
+      "-ExecutablePath",
+      String(webBridge),
+      "-ExtensionId",
+      String(config.webBridgeExtensionId || "fldmhceldgbpfpkbgopacenieobmligc"),
     ], {
       cwd: PROJECT_ROOT,
       timeout: 45000,
@@ -1471,7 +1474,7 @@ async function sendResultMail({ config, resultPath, logPath, mailLogPath, subjec
       "-CredentialSecureStringPath",
       smtpSecret,
       "-TaskName",
-      String(config.taskName || "CodexBadminton"),
+      String(config.taskName || "BadmintonBookingAssistant"),
       ...(subjectPrefix ? ["-SubjectPrefix", subjectPrefix] : []),
     ], {
       cwd: PROJECT_ROOT,
@@ -1520,7 +1523,7 @@ export async function runWebBridgeBooking(options = {}) {
         );
       }
     }
-    await ensureWebBridge(logger);
+    await ensureWebBridge(logger, config);
     await ensureVpn(config, logger);
     const existingApp = options.forceCasWechat ? null : await findExistingYdszSession({ session, logger });
     let appState = existingApp;
@@ -1602,7 +1605,7 @@ export async function runWebBridgeBooking(options = {}) {
         const message = error?.stack || error?.message || String(error);
         logger.step(`Submit/payment threw after slot selection; attempting page-state recovery. ${String(error?.message || error).slice(0, 300)}`);
         await sleep(1000);
-        await ensureWebBridge(logger).catch((bridgeError) => {
+        await ensureWebBridge(logger, config).catch((bridgeError) => {
           logger.step(`WebBridge recovery check failed: ${bridgeError?.message || bridgeError}`);
         });
         let recoveredPayment = null;

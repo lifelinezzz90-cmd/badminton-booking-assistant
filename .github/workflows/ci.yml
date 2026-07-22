@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Node syntax
+        run: node tests/node_syntax_check.mjs
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = @()
+          Get-ChildItem -Recurse -Filter *.ps1 -File | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors) { $failed += $errors }
+          }
+          if ($failed.Count) { $failed | Format-List; exit 1 }
+      - name: Configuration compatibility and PlanOnly tests
+        run: node --test
+      - name: README examples
+        run: node tests/readme_examples.test.mjs
+      - name: Non-mutating project self-check
+        shell: powershell
+        run: .\tools\test-project.ps1 -SkipNodeTests
