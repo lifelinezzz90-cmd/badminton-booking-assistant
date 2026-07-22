@@ -7,8 +7,10 @@ param(
     [string]$To,
     [Parameter(Mandatory)]
     [string]$From,
-    [string]$SmtpServer = "smtp.gmail.com",
-    [int]$SmtpPort = 587,
+    [ValidateNotNullOrEmpty()]
+    [string]$SmtpServer,
+    [Parameter(Mandatory)]
+    [int]$SmtpPort,
     [Parameter(Mandatory)]
     [string]$CredentialSecureStringPath
 )

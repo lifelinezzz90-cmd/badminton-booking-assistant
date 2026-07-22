@@ -20,231 +20,135 @@ if (-not $RunKey) { $RunKey = New-RunKey -RunDate $runDateValue -TargetDate $tar
 $checks = New-Object System.Collections.Generic.List[object]
 function Add-Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = "")
-    $script:checks.Add([pscustomobject]@{ name = $Name; ok = $Ok; detail = $Detail }) | Out-Null
+    $script:checks.Add([pscustomobject][ordered]@{ name = $Name; ok = $Ok; detail = $Detail }) | Out-Null
 }
 
 Add-Check "clock" $true (Get-Date -Format "yyyy-MM-dd HH:mm:ss K")
 
 try {
     $now = Get-Date
-    $pollStart = Get-TimeOnDate -Date $runDateValue -TimeText ([string]$config.pollStartTime)
     $pollUntil = Get-TimeOnDate -Date $runDateValue -TimeText ([string]$config.pollUntilTime)
-    $ok = $now -le $pollUntil
-    $detail = "now=$($now.ToString('yyyy-MM-dd HH:mm:ss K')); runDate=$($runDateValue.ToString('yyyy-MM-dd')); targetDate=$($targetDateValue.ToString('yyyy-MM-dd')); pollStart=$($pollStart.ToString('yyyy-MM-dd HH:mm:ss')); pollUntil=$($pollUntil.ToString('yyyy-MM-dd HH:mm:ss'))"
-    if (-not $ok) {
-        $detail = "stale run; $detail"
-    }
-    Add-Check "run-window" $ok $detail
+    Add-Check "run-window" ($now -le $pollUntil) ("runDate=" + $runDateValue.ToString("yyyy-MM-dd") + "; targetDate=" + $targetDateValue.ToString("yyyy-MM-dd") + "; pollUntil=" + $pollUntil.ToString("yyyy-MM-dd HH:mm:ss"))
 } catch {
     Add-Check "run-window" $false $_.Exception.Message
 }
 
-foreach ($file in @(
-    (Join-Path $root "scripts\booking_logic.mjs"),
-    (Join-Path $root "scripts\codex_plugin_runner.mjs"),
-    (Join-Path $root "scripts\ui_server.mjs"),
-    (Join-Path $root "scripts\webbridge_runner.mjs"),
-    (Join-Path $root "scripts\send_booking_result_email.ps1"),
-    (Join-Path $root "tools\common.ps1"),
-    (Join-Path $root "tools\open-vpn.ps1"),
-    (Join-Path $root "tools\start-ui-shortcut.ps1"),
-    (Join-Path $root "tools\start-ui.ps1"),
-    (Join-Path $root "tools\start-webbridge.ps1"),
-    (Join-Path $root "tools\click-wechat-allow.ps1"),
-    (Join-Path $root "tools\run-booking.ps1"),
-    (Join-Path $root "tools\assert-success-profile.ps1"),
-    (Join-Path $root "tools\install-next-formal-run.ps1"),
-    (Join-Path $root "tools\postcheck.ps1"),
-    (Join-Path $root "tools\install-task.ps1"),
-    (Join-Path $root "tools\set-secret.ps1"),
-    (Resolve-ProjectPath -Root $root -Path ([string]$config.passwordSecret)),
-    (Resolve-ProjectPath -Root $root -Path ([string]$config.smtpSecret))
-)) {
-    Add-Check "file:$file" (Test-Path -LiteralPath $file) ""
-    if ($file -like "*.ps1" -and (Test-Path -LiteralPath $file)) {
-        try { Test-PowerShellSyntax -Path $file; Add-Check "syntax:$file" $true "" } catch { Add-Check "syntax:$file" $false $_.Exception.Message }
-    }
-    if ($file -like "*.mjs" -and (Test-Path -LiteralPath $file)) {
-        try {
-            & node --check $file | Out-Null
-            Add-Check "syntax:$file" ($LASTEXITCODE -eq 0) "node --check"
-        } catch {
-            Add-Check "syntax:$file" $false $_.Exception.Message
-        }
+$requiredFiles = @(
+    "badminton.ps1",
+    "config\defaults.json",
+    "scripts\booking_logic.mjs",
+    "scripts\config_resolver.mjs",
+    "scripts\webbridge_runner.mjs",
+    "scripts\send_booking_result_email.ps1",
+    "tools\common.ps1",
+    "tools\open-vpn.ps1",
+    "tools\start-webbridge.ps1",
+    "tools\run-booking.ps1",
+    "tools\postcheck.ps1",
+    "tools\install-task.ps1"
+)
+foreach ($relative in $requiredFiles) {
+    $file = Join-Path $root $relative
+    $exists = Test-Path -LiteralPath $file -PathType Leaf
+    Add-Check ("file:" + $relative) $exists $(if ($exists) { "present" } else { "missing" })
+    if (-not $exists) { continue }
+    if ($file -like "*.ps1") {
+        try { Test-PowerShellSyntax -Path $file; Add-Check ("syntax:" + $relative) $true "PowerShell parser" } catch { Add-Check ("syntax:" + $relative) $false $_.Exception.Message }
+    } elseif ($file -like "*.mjs") {
+        & node --check $file 2>$null
+        Add-Check ("syntax:" + $relative) ($LASTEXITCODE -eq 0) "node --check"
     }
 }
 
-foreach ($secret in @(
-    @{ name = "passwordSecret"; path = [string]$config.passwordSecret },
-    @{ name = "smtpSecret"; path = [string]$config.smtpSecret }
-)) {
+try {
+    $passwordPath = Resolve-ProjectPath -Root $root -Path ([string]$config.passwordSecret)
+    $passwordCheck = Test-DpapiSecret -Path $passwordPath -RequireNonEmpty
+    Add-Check "secret:booking-password" $true ("DPAPI decrypts; length=" + $passwordCheck.length)
+} catch {
+    Add-Check "secret:booking-password" $false $_.Exception.Message
+}
+
+if ([bool]$config.mailOnCompletion) {
     try {
-        $resolvedSecret = Resolve-ProjectPath -Root $root -Path ([string]$secret.path)
-        $secretCheck = Test-DpapiSecret -Path $resolvedSecret -RequireNonEmpty
-        Add-Check "secret-decrypt:$($secret.name)" $true "path=$resolvedSecret; length=$($secretCheck.length); user=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+        $smtpPath = Resolve-ProjectPath -Root $root -Path ([string]$config.smtpSecret)
+        $smtpCheck = Test-DpapiSecret -Path $smtpPath -RequireNonEmpty
+        Add-Check "secret:smtp" $true ("Mail enabled; DPAPI decrypts; length=" + $smtpCheck.length)
     } catch {
-        Add-Check "secret-decrypt:$($secret.name)" $false "$($_.Exception.Message); user=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name); regenerate with tools\set-secret.ps1 under the same task user"
+        Add-Check "secret:smtp" $false $_.Exception.Message
     }
+} else {
+    Add-Check "secret:smtp" $true "Mail disabled; SMTP secret is not required."
 }
 
 try {
-    $core = Get-Content -LiteralPath (Join-Path $root "scripts\booking_logic.mjs") -Raw
-    $required = @(
-        "selectSlotPageFunction",
-        "venueStatePageFunction",
-        "submitBookingPageFunction",
-        "confirmPaymentPageFunction",
-        "discountGetSiteList",
-        "getSiteList",
-        "partialMinMinutes",
-        "paymentOutcome",
-        "MembershipCardPaymentArr",
-        "PatmentChange",
-        "PatmentModel = `"hyk`"",
-        "expectedShopNum",
-        "campus card payment array not available",
-        "clickedConfirmPayment"
-    )
-    $missing = @($required | Where-Object { $core -notlike "*$_*" })
-    Add-Check "logic-guards" ($missing.Count -eq 0) $(if ($missing.Count) { "missing: $($missing -join ', ')" } else { "ok" })
+    $validCampus = [string]$config.primaryCampus -in @("lxd", "xlh")
+    $validFallback = [string]$config.fallbackCampus -in @("lxd", "xlh", "auto", "none") -and [string]$config.fallbackCampus -ne [string]$config.primaryCampus
+    $priorityEnabled = -not [string]::IsNullOrWhiteSpace([string]$config.lxdCourtPriority) -and -not [string]::IsNullOrWhiteSpace([string]$config.xlhCourtPriority)
+    $fallbackEnabled = [string]$config.fallbackCampus -ne "none" -and [int]$config.fallbackAfterMisses -ge 1
+    $partialEnabled = -not [bool]$config.disablePartialFallback -and [int]$config.partialMinMinutes -ge 60 -and [int]$config.partialFallbackAfterMisses -ge 1
+    $limitsOk = [int]$config.maxBookingMinutes -ge 60 -and [int]$config.maxBookingMinutes -le 120 -and [decimal]$config.maxBookingAmount -gt 0
+    $taskScoped = [string]$config.taskName -like "BadmintonBookingAssistant_*"
+    Add-Check "config:campus-fallback" ($validCampus -and $validFallback -and $fallbackEnabled) ("primary=" + $config.primaryCampus + "; fallback=" + $config.fallbackCampus + "; afterMisses=" + $config.fallbackAfterMisses)
+    Add-Check "config:court-priority" $priorityEnabled "Both campus priority lists are non-empty."
+    Add-Check "config:partial-fallback" $partialEnabled ("enabled=" + (-not [bool]$config.disablePartialFallback) + "; minimum=" + $config.partialMinMinutes)
+    Add-Check "config:limits" $limitsOk ("minutes=" + $config.maxBookingMinutes + "; amount=" + $config.maxBookingAmount)
+    Add-Check "config:task-scope" $taskScoped ([string]$config.taskName)
+    Add-Check "config:payment" $true ("autoConfirm=" + [bool]$config.paymentAutoConfirm)
+    Add-Check "config:mail" $true ("enabled=" + [bool]$config.mailOnCompletion)
 } catch {
-    Add-Check "logic-guards" $false $_.Exception.Message
+    Add-Check "config:invariants" $false $_.Exception.Message
 }
 
-try {
-    $configOk = (
-        [string]$config.primaryCampus -in @("xlh", "lxd") -and
-        [string]$config.fallbackCampus -in @("xlh", "lxd", "auto", "none") -and
-        [string]$config.browserMode -eq "webbridge" -and
-        [string]$config.vpnLaunchMode -eq "explorer_shortcut" -and
-        [int]$config.pollIntervalMs -le 300 -and
-        [bool]$config.openVpn -and
-        [bool]$config.mailOnCompletion -and
-        -not [bool]$config.disablePartialFallback -and
-        [int]$config.partialMinMinutes -ge 60 -and
-        [int]$config.maxBookingMinutes -eq 90 -and
-        [int]$config.maxBookingAmount -eq 15 -and
-        ([string]$config.primaryCampus -ne "lxd" -or [int]$config.primaryCampusHoldSeconds -ge 10)
-    )
-    Add-Check "config-invariants" $configOk "browserMode=$($config.browserMode); expectedBrowserMode=webbridge; primary=$($config.primaryCampus); fallback=$($config.fallbackCampus); poll=$($config.pollIntervalMs); primaryHold=$($config.primaryCampusHoldSeconds)s; partial=$(-not [bool]$config.disablePartialFallback)/$($config.partialMinMinutes); maxMinutes=$($config.maxBookingMinutes); maxAmount=$($config.maxBookingAmount); vpn=$($config.openVpn); vpnLaunchMode=$($config.vpnLaunchMode); mail=$($config.mailOnCompletion)"
-} catch {
-    Add-Check "config-invariants" $false $_.Exception.Message
-}
-
-try {
-    $openVpnContent = Get-Content -LiteralPath (Join-Path $root "tools\open-vpn.ps1") -Raw
-    $ok = (
-        $openVpnContent -like "*Opening EasyConnect via Start Menu shortcut; direct executable launch is avoided*" -and
-        $openVpnContent -like "*explorer.exe*" -and
-        $openVpnContent -like "*refusing direct executable launch*"
-    )
-    Add-Check "vpn-shortcut-launch-guard" $ok "open-vpn.ps1 uses Explorer + Start Menu shortcut path"
-} catch {
-    Add-Check "vpn-shortcut-launch-guard" $false $_.Exception.Message
-}
-
-try {
-    $vpnState = Test-VpnAuthenticated
-    $detail = "adapters=$($vpnState.adapters -join '; '); ips=$($vpnState.ips -join '; ')"
-    Add-Check "vpn-authenticated-tunnel" ([bool]$vpnState.ok) $detail
-} catch {
-    Add-Check "vpn-authenticated-tunnel" $false $_.Exception.Message
-}
-
-$shortcutPath = [string]$config.easyConnectShortcutPath
-Add-Check "file:easyconnect-shortcut" ($shortcutPath -and (Test-Path -LiteralPath $shortcutPath)) $shortcutPath
-
-try {
-    $runnerContent = Get-Content -LiteralPath (Join-Path $root "scripts\codex_plugin_runner.mjs") -Raw
-    $required = @(
-        "EasyConnect already running; leaving it untouched to avoid duplicate-launch anomaly",
-        "Opening EasyConnect once via Start Menu shortcut; direct executable launch is avoided",
-        "refusing direct executable/app-id EasyConnect launch"
-    )
-    $missing = @($required | Where-Object { $runnerContent -notlike "*$_*" })
-    $forbidden = @()
-    foreach ($pattern in @(
-        'sky\.launch_app\(\{\s*app:\s*launchAppId',
-        'Start-Process -FilePath \$ShortcutPath',
-        'Start-Process -FilePath \$EasyConnectPath'
-    )) {
-        if ($runnerContent -match $pattern) { $forbidden += $pattern }
+if ([bool]$config.openVpn) {
+    $shortcut = [string]$config.easyConnectShortcutPath
+    Add-Check "vpn:shortcut" ($shortcut -and (Test-Path -LiteralPath $shortcut -PathType Leaf)) $(if ($shortcut) { "discovered" } else { "not found" })
+    try {
+        $vpnState = Test-VpnAuthenticated
+        Add-Check "vpn:tunnel" ([bool]$vpnState.ok) $(if ($vpnState.ok) { "authenticated" } else { "not authenticated" })
+    } catch {
+        Add-Check "vpn:tunnel" $false $_.Exception.Message
     }
-    $ok = ($missing.Count -eq 0 -and $forbidden.Count -eq 0)
-    $detail = "non-reentrant Start Menu shortcut launch guarded"
-    if ($missing.Count) { $detail = "missing: $($missing -join ', ')" }
-    if ($forbidden.Count) { $detail = "$detail; forbidden: $($forbidden -join ', ')" }
-    Add-Check "vpn-launch-guard" $ok $detail
-} catch {
-    Add-Check "vpn-launch-guard" $false $_.Exception.Message
+} else {
+    Add-Check "vpn:shortcut" $true "VPN launch disabled by advanced configuration."
 }
 
 if ([string]$config.browserMode -eq "webbridge") {
-    $webBridge = if ($env:KIMI_WEBBRIDGE_EXE) { $env:KIMI_WEBBRIDGE_EXE } else { Join-Path $env:USERPROFILE ".kimi-webbridge\bin\kimi-webbridge.exe" }
-    Add-Check "file:kimi-webbridge" (Test-Path -LiteralPath $webBridge) $webBridge
-    try {
-        $statusText = & $webBridge status
-        $status = $statusText | ConvertFrom-Json
-        Add-Check "webbridge-status" ([bool]$status.running -and [bool]$status.extension_connected) $statusText
-    } catch {
-        Add-Check "webbridge-status" $false $_.Exception.Message
+    $bridge = [string]$config.webBridgeExecutablePath
+    Add-Check "webbridge:executable" ($bridge -and (Test-Path -LiteralPath $bridge -PathType Leaf)) $(if ($bridge) { "configured" } else { "not configured" })
+    if ($bridge -and (Test-Path -LiteralPath $bridge -PathType Leaf)) {
+        try {
+            $statusText = & $bridge status 2>$null
+            $status = $statusText | ConvertFrom-Json
+            Add-Check "webbridge:connection" ([bool]$status.running -and [bool]$status.extension_connected) "service and browser extension"
+        } catch {
+            Add-Check "webbridge:connection" $false $_.Exception.Message
+        }
     }
 } else {
-    $pluginCacheRoot = if ($env:CODEX_PLUGIN_CACHE_ROOT) { $env:CODEX_PLUGIN_CACHE_ROOT } elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME "plugins\cache" } else { Join-Path $env:USERPROFILE ".codex\plugins\cache" }
-    $chromePluginClient = @(Get-ChildItem -LiteralPath $pluginCacheRoot -Recurse -Filter "browser-client.mjs" -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match "\\chrome\\" } |
-        Sort-Object FullName -Descending |
-        Select-Object -First 1 -ExpandProperty FullName)
-    $computerUseClient = @(Get-ChildItem -LiteralPath $pluginCacheRoot -Recurse -Filter "computer-use-client.mjs" -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match "\\computer-use\\" } |
-        Sort-Object FullName -Descending |
-        Select-Object -First 1 -ExpandProperty FullName)
-    Add-Check "file:codex-chrome-plugin-client" ([bool]$chromePluginClient -and (Test-Path -LiteralPath $chromePluginClient)) $(if ($chromePluginClient) { $chromePluginClient } else { "not found under $pluginCacheRoot" })
-    Add-Check "file:computer-use-client" ([bool]$computerUseClient -and (Test-Path -LiteralPath $computerUseClient)) $(if ($computerUseClient) { $computerUseClient } else { "not found under $pluginCacheRoot" })
-    try {
-        $runnerContent = Get-Content -LiteralPath (Join-Path $root "scripts\codex_plugin_runner.mjs") -Raw
-        $usesCodexPlugin = (
-            $runnerContent -like "*setupBrowserRuntime*" -and
-            $runnerContent -like "*browsers.get(`"extension`")*" -and
-            $runnerContent -like "*setupComputerUseRuntime*"
-        )
-        Add-Check "codex-plugin-runtime-path" $usesCodexPlugin "requires Codex Chrome plugin extension plus Computer Use"
-    } catch {
-        Add-Check "codex-plugin-runtime-path" $false $_.Exception.Message
-    }
+    Add-Check "webbridge:mode" $false ("Unsupported public scheduler browserMode=" + [string]$config.browserMode)
 }
 
 try {
-    $codexTasks = @(Get-ScheduledTask | Where-Object { $_.TaskName -like "CodexBadminton_*" -and $_.State -ne "Disabled" } | Select-Object -ExpandProperty TaskName)
-    Add-Check "windows-booking-tasks" $true $(if ($codexTasks.Count) { $codexTasks -join "," } else { "none installed yet" })
-    $formalTask = Get-ScheduledTask -TaskName ([string]$config.taskName) -ErrorAction SilentlyContinue
-    if ($formalTask) {
-        $actionText = (($formalTask.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join " ")
-        Add-Check "formal-task-payment-enabled" ($actionText -notlike "*--noConfirmPayment*") $actionText
-    }
+    $tasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "BadmintonBookingAssistant_*" } | Select-Object -ExpandProperty TaskName)
+    Add-Check "tasks:project-scope" $true $(if ($tasks.Count) { $tasks -join "," } else { "none installed" })
 } catch {
-    Add-Check "windows-booking-task-inspection" $true "not inspected: $($_.Exception.Message)"
-}
-
-try {
-    $nodeVersion = & node --version
-    Add-Check "node" ($LASTEXITCODE -eq 0) $nodeVersion
-} catch {
-    Add-Check "node" $false $_.Exception.Message
+    Add-Check "tasks:project-scope" $true "Task Scheduler inspection unavailable."
 }
 
 $failed = @($checks | Where-Object { -not $_.ok })
 $status = if ($failed.Count) { "FAIL" } else { "OK" }
-$logPath = Join-Path $root ("logs\precheck_$RunKey.log")
+$logDir = Join-Path $root "logs"
+if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$logPath = Join-Path $logDir ("precheck_" + $RunKey + ".log")
 $lines = @(
-    "CodexBadminton precheck for target $($targetDateValue.ToString('yyyy-MM-dd'))",
-    "Status: $status",
-    "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')",
-    "Execution model: $($config.browserMode)",
+    "Badminton Booking Assistant precheck for target " + $targetDateValue.ToString("yyyy-MM-dd"),
+    "Status: " + $status,
+    "Generated: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss K"),
     ""
 )
 foreach ($check in $checks) {
-    $lines += ("[{0}] {1} - {2}" -f ($(if ($check.ok) { "OK" } else { "FAIL" })), $check.name, $check.detail)
+    $label = if ($check.ok) { "OK" } else { "FAIL" }
+    $lines += ("[" + $label + "] " + $check.name + " - " + $check.detail)
 }
 $lines | Set-Content -LiteralPath $logPath -Encoding UTF8
 Get-Content -LiteralPath $logPath

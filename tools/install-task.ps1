@@ -14,6 +14,10 @@ $ErrorActionPreference = "Stop"
 
 $root = Get-ProjectRoot
 $config = Read-BookingConfig -ConfigPath $ConfigPath
+if (-not [bool]$config.paymentAutoConfirm) { $NoConfirmPayment = $true }
+if ([bool]$config.openVpn -and (-not [string]$config.easyConnectShortcutPath -or -not (Test-Path -LiteralPath ([string]$config.easyConnectShortcutPath)))) {
+    throw "EasyConnect shortcut was not discovered. Run .\badminton.ps1 doctor, then set -VpnShortcutPath if needed."
+}
 if ([string]$config.browserMode -eq "codex_plugin") {
     throw "install-task.ps1 is disabled for browserMode=codex_plugin. Do not install the old WebBridge Windows scheduled task for this production path; run scripts/codex_plugin_runner.mjs from a Codex automation/thread with Chrome plugin and Computer Use available."
 }
@@ -24,6 +28,7 @@ $runKey = New-RunKey -RunDate $runDateValue -TargetDate $targetDateValue -Config
 $webBridgeRunner = Join-Path $root "scripts\webbridge_runner.mjs"
 $requiredFiles = @(
     (Join-Path $root "scripts\booking_logic.mjs"),
+    (Join-Path $root "scripts\config_resolver.mjs"),
     $webBridgeRunner,
     (Join-Path $root "scripts\send_booking_result_email.ps1"),
     (Join-Path $root "tools\common.ps1"),
@@ -60,7 +65,8 @@ if (-not $SkipPrecheckNow) {
 }
 
 if (-not $KeepExistingCodexTasks) {
-    $oldTasks = @(Get-ScheduledTask | Where-Object { $_.TaskName -like "CodexBadminton_*" })
+    $projectPrefix = Get-ProjectTaskPrefix
+    $oldTasks = @(Get-ScheduledTask | Where-Object { $_.TaskName -like "$projectPrefix*" })
     foreach ($task in $oldTasks) {
         Unregister-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -Confirm:$false -ErrorAction SilentlyContinue
     }
@@ -74,7 +80,10 @@ $taskConfigJson = $taskConfigHash | ConvertTo-Json -Depth 20
 $taskConfigJsonBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($taskConfigJson))
 $taskName = [string]$config.taskName
 if (-not $taskName) {
-    $taskName = "CodexBadminton_LXD_1900_2100"
+    $taskName = "BadmintonBookingAssistant_LXD_1930_2100"
+}
+if ($taskName -notlike "BadmintonBookingAssistant_*") {
+    throw "Refusing to register a task outside the BadmintonBookingAssistant_ namespace: $taskName"
 }
 
 $taskStart = Get-TimeOnDate -Date $runDateValue -TimeText ([string]$config.taskStartTime)
@@ -128,7 +137,9 @@ if (-not $SkipSupportTasks) {
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", "`"$webBridgeStartScript`"",
-        "-WaitSeconds", "45"
+        "-WaitSeconds", "45",
+        "-ExecutablePath", "`"$([string]$config.webBridgeExecutablePath)`"",
+        "-ExtensionId", "`"$([string]$config.webBridgeExtensionId)`""
     )
     $webBridgePrestartAction = New-ScheduledTaskAction `
         -Execute "powershell.exe" `

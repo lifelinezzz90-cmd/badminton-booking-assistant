@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $root = Get-ProjectRoot
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $runKey = "scheduled_mail_smoke_$stamp"
-$taskName = "CodexBadminton_MailSmoke_$stamp"
+$taskName = "BadmintonBookingAssistant_MailSmoke_$stamp"
 $configJsonBase64 = ""
 
 function Get-EmbeddedConfigFromTask {
