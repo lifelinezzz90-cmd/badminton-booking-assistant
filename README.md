@@ -53,7 +53,7 @@ cd badminton-booking-assistant
 
 ## 兼容性
 
-首版支持 Windows、PowerShell 5.1+、Node.js 20+、Chrome、Kimi WebBridge 与 EasyConnect，当前适配深圳职业技术大学体育场馆预约系统的留仙洞和西丽湖场馆。其他场馆系统需要适配页面路由和预约逻辑。
+首版支持 Windows、PowerShell 5.1+、Node.js 20+、Chrome、Kimi WebBridge 与 EasyConnect，当前内置适配留仙洞和西丽湖两个场馆入口。其他场馆系统需要适配页面路由和预约逻辑。
 
 本项目是非官方社区工具，与任何学校、场馆、VPN 或浏览器扩展提供方均无隶属或授权关系。请遵守目标系统规则并自行承担使用风险。
 
