@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet("help", "setup", "doctor", "schedule", "status", "config", "dashboard", "uninstall")]
@@ -13,6 +13,8 @@ param(
     [string]$CourtPriorityLxd = "",
     [string]$CourtPriorityXlh = "",
     [string]$VpnShortcutPath = "",
+    [switch]$SelectVpnShortcut,
+    [switch]$UpdatePassword,
     [string]$MailProvider = "",
     [string]$MailAddress = "",
     [string]$MailTo = "",
@@ -89,11 +91,16 @@ function Set-DpapiSecretInteractive {
     }
     $secure = Read-Host -Prompt $Prompt -AsSecureString
     $encrypted = $secure | ConvertFrom-SecureString
-    if ([string]::IsNullOrWhiteSpace($encrypted)) { throw "Secret encryption failed." }
-    [System.IO.File]::WriteAllText($resolved, $encrypted, [System.Text.Encoding]::ASCII)
-    [void](Test-DpapiSecret -Path $resolved -RequireNonEmpty)
+    if ([string]::IsNullOrWhiteSpace($encrypted)) { throw "密钥加密失败。" }
+    $temporary = $resolved + ".tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporary, $encrypted, [System.Text.Encoding]::ASCII)
+        [void](Test-DpapiSecret -Path $temporary -RequireNonEmpty)
+        Move-Item -LiteralPath $temporary -Destination $resolved -Force
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
 }
-
 function Find-VpnShortcut {
     $roots = @()
     if ($env:ProgramData) { $roots += Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs" }
@@ -109,6 +116,39 @@ function Find-VpnShortcut {
     return ""
 }
 
+
+function Resolve-VpnShortcutFile {
+    param([Parameter(Mandatory)][string]$Path)
+    $resolved = [System.IO.Path]::GetFullPath($Path.Trim('"').Trim())
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf) -or [System.IO.Path]::GetExtension($resolved) -ine ".lnk") {
+        throw "VPN 快捷方式必须是已存在的 .lnk 文件，不能选择 .exe。"
+    }
+    return $resolved
+}
+
+function Select-VpnShortcutFile {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+        $dialog.Title = "选择 EasyConnect 的开始菜单快捷方式"
+        $dialog.Filter = "Windows 快捷方式 (*.lnk)|*.lnk"
+        $dialog.CheckFileExists = $true
+        $dialog.Multiselect = $false
+        $startMenuCandidates = @()
+        if ($env:APPDATA) { $startMenuCandidates += Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs" }
+        if ($env:ProgramData) { $startMenuCandidates += Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs" }
+        $initialDirectory = $startMenuCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
+        if ($initialDirectory) { $dialog.InitialDirectory = $initialDirectory }
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            return Resolve-VpnShortcutFile -Path $dialog.FileName
+        }
+    } catch {
+        Write-Warning ("无法打开文件选择器：" + $_.Exception.Message)
+    }
+    Write-Host "未选择 VPN 快捷方式。你可以稍后执行：.\badminton.ps1 config -SelectVpnShortcut"
+    Write-Host "查找方法：Windows 开始菜单搜索 EasyConnect → 右键‘打开文件所在的位置’ → 选择其中的 .lnk 文件。"
+    return ""
+}
 function Write-LocalConfig {
     param([Parameter(Mandatory)]$Value)
     Write-JsonFile -Value $Value -Path (Resolve-LocalConfigPath) -Depth 20
@@ -171,31 +211,39 @@ function Get-MailSettings {
 }
 
 function Invoke-Setup {
+    Write-Host ""
+    Write-Host "首次配置说明"
+    Write-Host "  账号：目标预约系统的统一身份认证（CAS）登录账号，通常是学号或工号。"
+    Write-Host "  密码：与该账号对应的登录密码；输入时不会显示字符。"
+    Write-Host "  保存：密码只以 Windows DPAPI 加密文件保存，不会写入 JSON 或上传 GitHub。"
+    Write-Host "  VPN：通常会自动查找 EasyConnect 开始菜单快捷方式；找不到时会弹出选择窗口。"
+    Write-Host ""
+
     $path = Resolve-LocalConfigPath
     $existing = $null
     if (Test-Path -LiteralPath $path) {
         $existing = Read-LocalConfigObject
-        if (-not (Confirm-Action -Prompt "Update the existing local configuration? [y/N]")) {
-            Write-Host "Setup cancelled; no files were changed."
+        if (-not (Confirm-Action -Prompt "检测到已有本地配置，是否更新？[y/N]")) {
+            Write-Host "已取消；没有修改任何文件。"
             return
         }
     }
 
     $account = $Username.Trim()
     if (-not $account -and $existing -and $existing.username) { $account = [string]$existing.username }
-    if (-not $account) { $account = (Read-Host "Booking account").Trim() }
-    if (-not $account) { throw "Username is required." }
+    if (-not $account) { $account = (Read-Host "请输入统一身份认证（CAS）账号（通常是学号/工号）").Trim() }
+    if (-not $account) { throw "必须填写统一身份认证账号。" }
 
     $primary = $PrimaryCampus.Trim().ToLowerInvariant()
     if (-not $primary -and $existing -and $existing.primaryCampus) { $primary = [string]$existing.primaryCampus }
-    if (-not $primary) { $primary = Read-Choice -Prompt "Primary campus (lxd/xlh)" -Allowed @("lxd", "xlh") -Default "lxd" }
-    if ($primary -notin @("lxd", "xlh")) { throw "PrimaryCampus must be lxd or xlh." }
+    if (-not $primary) { $primary = Read-Choice -Prompt "首选场馆代码（lxd/xlh）" -Allowed @("lxd", "xlh") -Default "lxd" }
+    if ($primary -notin @("lxd", "xlh")) { throw "PrimaryCampus 必须是 lxd 或 xlh。" }
 
     $defaultFallback = if ($primary -eq "lxd") { "xlh" } else { "lxd" }
     $fallback = $FallbackCampus.Trim().ToLowerInvariant()
     if (-not $fallback -and $existing -and $existing.fallbackCampus) { $fallback = [string]$existing.fallbackCampus }
-    if (-not $fallback) { $fallback = Read-Choice -Prompt "Fallback campus (lxd/xlh/none)" -Allowed @("lxd", "xlh", "none") -Default $defaultFallback }
-    if ($fallback -notin @("lxd", "xlh", "none", "auto") -or $fallback -eq $primary) { throw "FallbackCampus must differ from PrimaryCampus." }
+    if (-not $fallback) { $fallback = Read-Choice -Prompt "候补场馆代码（lxd/xlh/none）" -Allowed @("lxd", "xlh", "none") -Default $defaultFallback }
+    if ($fallback -notin @("lxd", "xlh", "none", "auto") -or $fallback -eq $primary) { throw "候补场馆不能与首选场馆相同。" }
 
     $local = if ($existing) { $existing } else { New-MinimalLocalConfig -Account $account -Primary $primary -Fallback $fallback }
     Set-ObjectProperty -Object $local -Name "version" -Value 1
@@ -203,49 +251,55 @@ function Invoke-Setup {
     Set-ObjectProperty -Object $local -Name "primaryCampus" -Value $primary
     Set-ObjectProperty -Object $local -Name "fallbackCampus" -Value $fallback
 
-    $detectedVpn = Find-VpnShortcut
-    if ($detectedVpn) {
-        Write-Host "EasyConnect shortcut detected automatically; no machine-specific path was saved."
+    $selectedVpn = ""
+    $detectedVpn = ""
+    if ($VpnShortcutPath) {
+        $selectedVpn = Resolve-VpnShortcutFile -Path $VpnShortcutPath
+    } elseif ($SelectVpnShortcut) {
+        $selectedVpn = Select-VpnShortcutFile
     } else {
-        $manualPath = $VpnShortcutPath.Trim()
-        if (-not $manualPath -and -not $Yes) { $manualPath = (Read-Host "EasyConnect .lnk path (optional)").Trim('"').Trim() }
-        if ($manualPath) {
-            $resolvedVpn = [System.IO.Path]::GetFullPath($manualPath)
-            if (-not (Test-Path -LiteralPath $resolvedVpn -PathType Leaf) -or [System.IO.Path]::GetExtension($resolvedVpn) -ine ".lnk") {
-                throw "VpnShortcutPath must point to an existing .lnk file."
-            }
-            $vpn = Get-OrCreateChildObject -Object $local -Name "vpn"
-            Set-ObjectProperty -Object $vpn -Name "shortcutPath" -Value $resolvedVpn
+        $detectedVpn = Find-VpnShortcut
+        if ($detectedVpn) {
+            Write-Host "已自动找到 EasyConnect 快捷方式，无需填写或保存本机路径。"
+        } elseif (-not $Yes) {
+            Write-Host "没有自动找到 EasyConnect，接下来请在弹窗中选择它的 .lnk 快捷方式。"
+            $selectedVpn = Select-VpnShortcutFile
         }
+    }
+    if ($selectedVpn) {
+        $vpn = Get-OrCreateChildObject -Object $local -Name "vpn"
+        Set-ObjectProperty -Object $vpn -Name "shortcutPath" -Value $selectedVpn
+        Write-Host "已保存 VPN 快捷方式位置。"
+    } elseif (-not $detectedVpn) {
+        Write-Warning "暂未配置 VPN 快捷方式；其他配置会正常保存，可稍后补选。"
     }
 
     Write-LocalConfig -Value $local
 
     $passwordPath = Resolve-ProjectPath -Root $script:ProjectRoot -Path "secrets/cas_password.dpapi.txt"
-    if (-not (Test-Path -LiteralPath $passwordPath)) {
-        Set-DpapiSecretInteractive -RelativePath "secrets/cas_password.dpapi.txt" -Prompt "Booking password (stored with Windows DPAPI)"
+    if ($UpdatePassword -or -not (Test-Path -LiteralPath $passwordPath)) {
+        Set-DpapiSecretInteractive -RelativePath "secrets/cas_password.dpapi.txt" -Prompt "请输入与 CAS 账号对应的登录密码（输入内容不可见）"
+        Write-Host "登录密码已使用 Windows DPAPI 加密保存。"
     } else {
-        Write-Host "Existing DPAPI booking password kept."
+        Write-Host "已保留现有的 DPAPI 加密登录密码；如需更换，请运行 config -UpdatePassword。"
     }
 
-    $enableMailNow = [bool]$EnableMail
-    if (-not $EnableMail -and -not $DisableMail -and -not $Yes) {
-        $enableMailNow = Confirm-Action -Prompt "Enable completion email now? [y/N]"
-    }
-    if ($enableMailNow) {
+    if ($EnableMail) {
         $mail = Get-MailSettings -ExistingMail $local.mail
         Set-ObjectProperty -Object $local -Name "mail" -Value $mail
         Write-LocalConfig -Value $local
-        Set-DpapiSecretInteractive -RelativePath "secrets/smtp_authorization.dpapi.txt" -Prompt "SMTP authorization code (stored with Windows DPAPI)"
+        Set-DpapiSecretInteractive -RelativePath "secrets/smtp_authorization.dpapi.txt" -Prompt "SMTP 授权码（输入内容不可见，将使用 Windows DPAPI 保存）"
     } elseif ($DisableMail -and $local.PSObject.Properties["mail"]) {
         Set-ObjectProperty -Object $local.mail -Name "enabled" -Value $false
         Write-LocalConfig -Value $local
+    } elseif (-not $existing) {
+        Write-Host "邮件通知保持关闭；需要时再运行 config -EnableMail。"
     }
 
-    Write-Host "Setup complete: $path"
-    Write-Host "Next: .\badminton.ps1 doctor"
+    Write-Host ""
+    Write-Host "首次配置完成。账号已写入本地配置；密码没有写入 JSON。"
+    Write-Host "下一步：.\badminton.ps1 doctor"
 }
-
 function New-DoctorCheck {
     param([string]$Name, [string]$Status, [string]$Detail)
     return [pscustomobject][ordered]@{ name = $Name; status = $Status; detail = $Detail }
@@ -302,7 +356,7 @@ function Invoke-Doctor {
         if ($vpnShortcut -and (Test-Path -LiteralPath $vpnShortcut -PathType Leaf)) {
             $checks.Add((New-DoctorCheck -Name "EasyConnect" -Status "ok" -Detail "Shortcut discovered."))
         } else {
-            $checks.Add((New-DoctorCheck -Name "EasyConnect" -Status "fail" -Detail "Shortcut not found; run config -VpnShortcutPath <file.lnk>."))
+            $checks.Add((New-DoctorCheck -Name "EasyConnect" -Status "fail" -Detail "未找到快捷方式；请运行 .\badminton.ps1 config -SelectVpnShortcut 打开选择窗口。"))
         }
 
         if ([bool]$effective.mailOnCompletion) {
@@ -333,6 +387,12 @@ function Invoke-Config {
     $local = Read-LocalConfigObject
     $changed = $false
 
+    if ($UpdatePassword) {
+        Set-DpapiSecretInteractive -RelativePath "secrets/cas_password.dpapi.txt" -Prompt "请输入新的 CAS 登录密码（输入内容不可见）"
+        Write-Host "登录密码已使用 Windows DPAPI 安全更新。"
+        $changed = $true
+    }
+
     if ($Username) { Set-ObjectProperty -Object $local -Name "username" -Value $Username.Trim(); $changed = $true }
     if ($PrimaryCampus) {
         $value = $PrimaryCampus.Trim().ToLowerInvariant()
@@ -352,14 +412,14 @@ function Invoke-Config {
         if ($CourtPriorityXlh) { Set-ObjectProperty -Object $priority -Name "xlh" -Value $CourtPriorityXlh }
         $changed = $true
     }
-    if ($VpnShortcutPath) {
-        $resolvedVpn = [System.IO.Path]::GetFullPath($VpnShortcutPath.Trim('"'))
-        if (-not (Test-Path -LiteralPath $resolvedVpn -PathType Leaf) -or [System.IO.Path]::GetExtension($resolvedVpn) -ine ".lnk") {
-            throw "VpnShortcutPath must point to an existing .lnk file."
+    if ($VpnShortcutPath -or $SelectVpnShortcut) {
+        $resolvedVpn = if ($VpnShortcutPath) { Resolve-VpnShortcutFile -Path $VpnShortcutPath } else { Select-VpnShortcutFile }
+        if ($resolvedVpn) {
+            $vpn = Get-OrCreateChildObject -Object $local -Name "vpn"
+            Set-ObjectProperty -Object $vpn -Name "shortcutPath" -Value $resolvedVpn
+            Write-Host "已保存 VPN 快捷方式位置。"
+            $changed = $true
         }
-        $vpn = Get-OrCreateChildObject -Object $local -Name "vpn"
-        Set-ObjectProperty -Object $vpn -Name "shortcutPath" -Value $resolvedVpn
-        $changed = $true
     }
     if ($EnableMail -and $DisableMail) { throw "Choose either EnableMail or DisableMail." }
     if ($EnableMail) {
@@ -501,7 +561,9 @@ Badminton Booking Assistant
   .\badminton.ps1 doctor
   .\badminton.ps1 schedule -TargetDate 2026-07-29 -Start 19:30 -End 21:00 -PlanOnly
   .\badminton.ps1 status
-  .\badminton.ps1 config [-EnableAutoPayment]
+  .\badminton.ps1 config -UpdatePassword
+  .\badminton.ps1 config -SelectVpnShortcut
+  .\badminton.ps1 config [-EnableMail] [-EnableAutoPayment]
   .\badminton.ps1 dashboard
   .\badminton.ps1 uninstall
 

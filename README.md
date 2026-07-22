@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/logo.svg" width="96" alt="Badminton Booking Assistant"></p>
 <h1 align="center">Badminton Booking Assistant</h1>
 <p align="center">面向 Windows 的定时羽毛球场预约助手：先预检、再计划、按时执行，并保留完整候补链路。</p>
-<p align="center"><a href="https://github.com/lifelinezzz90-cmd/badminton-booking-assistant/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lifelinezzz90-cmd/badminton-booking-assistant/ci.yml?branch=main&label=CI"></a> <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-126b4d"></a> <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4"> <a href="https://github.com/lifelinezzz90-cmd/badminton-booking-assistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lifelinezzz90-cmd/badminton-booking-assistant?include_prereleases"></a></p>
+<p align="center"><a href="https://github.com/lifelinezzz90-cmd/badminton-booking-assistant/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lifelinezzz90-cmd/badminton-booking-assistant/ci.yml?branch=main&label=CI"></a> <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-126b4d"></a> <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-0078D4"></p>
 <p align="center"><a href="README.en.md">English</a> · <a href="docs/installation.md">安装</a> · <a href="docs/configuration.md">配置</a> · <a href="docs/troubleshooting.md">排障</a> · <a href="SECURITY.md">安全</a></p>
 
 ![脱敏状态面板](assets/dashboard-preview.svg)
@@ -22,6 +22,17 @@ cd badminton-booking-assistant
 .\badminton.ps1 doctor
 .\badminton.ps1 schedule -TargetDate 2026-07-29 -Start 19:30 -End 21:00 -PlanOnly
 ```
+
+第一次运行不需要编辑 JSON。执行 `.\badminton.ps1 setup` 后，向导会把每一项说清楚：
+
+| 向导项目 | 应该填写什么 |
+| --- | --- |
+| 统一身份认证（CAS）账号 | 你平时登录目标预约系统使用的账号，通常是学号或工号 |
+| 登录密码 | 与上述账号对应的密码；输入时不显示字符，并使用 Windows DPAPI 加密保存 |
+| 首选/候补场馆 | 直接选择提示中的代码；候补默认开启 |
+| EasyConnect 快捷方式 | 通常自动检测；找不到时会弹出窗口让你选择 `.lnk`，不需要手抄路径 |
+
+不要把密码写进 `config/local.json`。密码需要更换时运行 `.\badminton.ps1 config -UpdatePassword`；VPN 没选好时运行 `.\badminton.ps1 config -SelectVpnShortcut`。
 
 确认预览无误后，去掉 `-PlanOnly` 再运行一次即可安装五段式计划任务。首次使用前请阅读[安装指南](docs/installation.md)。
 

@@ -15,6 +15,10 @@ cd badminton-booking-assistant
 .\badminton.ps1 schedule -TargetDate 2026-07-29 -Start 19:30 -End 21:00 -PlanOnly
 ```
 
+Do not edit JSON for the first run. `setup` explains each prompt: use the unified-login/CAS account you normally use for the booking system (often a student or staff ID), then enter its password in the hidden prompt. The password is DPAPI-protected and is never stored in `config/local.json`. EasyConnect is detected from the Start Menu; if discovery fails, a `.lnk` file picker opens automatically.
+
+To change the password later, run `.\badminton.ps1 config -UpdatePassword`. To select the VPN shortcut again, run `.\badminton.ps1 config -SelectVpnShortcut`.
+
 Remove `-PlanOnly` only after reviewing the five-task preview.
 
 ## Highlights

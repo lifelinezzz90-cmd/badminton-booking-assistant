@@ -30,6 +30,16 @@
 
 系统会按顺序继续尝试；单个场地失败不会终止整条链路。
 
+## 账号与密码
+
+`username` 是目标预约系统的统一身份认证（CAS）账号，通常是学号或工号。登录密码不会保存在 JSON 中；首次运行 `setup` 时在隐藏输入框中填写，并由 Windows DPAPI 加密。需要更新密码时运行：
+
+```powershell
+.\badminton.ps1 config -UpdatePassword
+```
+
+不要在 `config/local.json`、命令行参数或提交记录中保存明文密码。
+
 ## VPN
 
 程序扫描以下开始菜单位置中的 EasyConnect 快捷方式：
@@ -37,11 +47,17 @@
 - 系统级开始菜单
 - 当前用户开始菜单
 
-只有自动发现失败时才需要保存 `vpn.shortcutPath`，建议通过 `setup` 或 `config` 向导选择 `.lnk`，不要复制其他人的绝对路径。
+只有自动发现失败时才需要保存 `vpn.shortcutPath`。运行下面的命令会打开文件选择窗口：
+
+```powershell
+.\badminton.ps1 config -SelectVpnShortcut
+```
+
+请选择开始菜单中的 `.lnk`，不要选择 `.exe`，也不要复制其他人的绝对路径。查找方法：Windows 开始菜单搜索 EasyConnect → 右键“打开文件所在的位置”。
 
 ## 邮件
 
-邮件默认关闭。运行 `.\badminton.ps1 config` 可选择 163、QQ 或自定义 SMTP。配置文件只保存提供商、发件地址、收件地址、服务器和端口；授权码写入当前 Windows 用户可解密的 DPAPI 文件，不进入 JSON。
+邮件默认关闭。运行 `.\badminton.ps1 config -EnableMail` 可选择 163、QQ 或自定义 SMTP。配置文件只保存提供商、发件地址、收件地址、服务器和端口；授权码写入当前 Windows 用户可解密的 DPAPI 文件，不进入 JSON。
 
 ## 自动付款
 
